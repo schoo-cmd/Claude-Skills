@@ -62,7 +62,8 @@ Add this to your Claude Code MCP settings (`~/.claude/claude_desktop_config.json
 | Tool | Description |
 |---|---|
 | `list_entries` | Browse entries by type (paginated) |
-| `search_entries` | Query with filters, sorting, and field selection |
+| `search_entries` | Query with MongoDB-style filters (`$eq`, `$contains`, `$gt`, `$in`, etc.) |
+| `filter_entries` | Filter entries using the Cells API (fieldId + value conditions) |
 | `get_cell_values` | Fetch specific field values for known entries |
 | `list_views` | List saved views |
 | `get_view_data` | Fetch data from a saved view |
@@ -72,12 +73,13 @@ Add this to your Claude Code MCP settings (`~/.claude/claude_desktop_config.json
 |---|---|
 | `create_entry` | Create a new record |
 | `update_entry` | Update fields on an existing record |
+| `delete_entries` | Delete entries by ID (irreversible) |
 
 ### Management & Audit
 | Tool | Description |
 |---|---|
 | `list_users` | List all DealCloud users |
-| `get_history` | View modification history for an entry type |
+| `get_history` | View modification history (audit trail) |
 
 ## Example Conversation
 
@@ -98,5 +100,6 @@ Add this to your Claude Code MCP settings (`~/.claude/claude_desktop_config.json
 - Credentials are loaded from environment variables only
 - OAuth2 tokens are cached in memory and auto-refreshed before expiry
 - No credentials are ever logged, serialised to disk, or included in error output
-- Write operations (`create_entry`, `update_entry`) require explicit tool approval in Claude Code
+- Write operations (`create_entry`, `update_entry`, `delete_entries`) require explicit tool approval in Claude Code
+- Delete operations are capped at 100 entries per call
 - Pagination is capped at 1000 records per request to prevent accidental bulk reads

@@ -43,18 +43,13 @@ export interface Field {
   [key: string]: unknown;
 }
 
-export interface QueryFilter {
-  fieldId: number;
-  value: unknown;
-  operator?: string; // $eq, $contains, $gt, $lt, $in, $between, $or, $and
-}
-
 export interface RowsQueryRequest {
-  fieldIds?: number[];
-  query?: QueryFilter[];
+  query?: string; // MongoDB-style query string, e.g. "{Status: {$eq: 'Active'}}"
+  fields?: string[]; // Field apiNames to include in results
   skip?: number;
   limit?: number;
-  orderBy?: { fieldId: number; direction: "asc" | "desc" }[];
+  resolveReferenceUrls?: boolean;
+  wrapIntoArrays?: boolean;
 }
 
 export interface CellValue {
@@ -118,7 +113,7 @@ export class DealCloudClient {
       return this.accessToken;
     }
 
-    const tokenUrl = `${this.config.siteUrl}/api/rest/v4/token`;
+    const tokenUrl = `${this.config.siteUrl}/api/rest/v1/oauth/token`;
 
     const body = new URLSearchParams({
       grant_type: "client_credentials",
@@ -208,7 +203,7 @@ export class DealCloudClient {
   }
 
   async getUsers(): Promise<unknown[]> {
-    return this.request<unknown[]>("GET", "/management/users");
+    return this.request<unknown[]>("GET", "/schema/users");
   }
 
   // -----------------------------------------------------------------------
@@ -221,7 +216,7 @@ export class DealCloudClient {
   ): Promise<unknown> {
     return this.request<unknown>(
       "POST",
-      `/data/entrydata/rows/${entryTypeId}/query`,
+      `/data/entrydata/rows/query/${entryTypeId}`,
       query
     );
   }
@@ -234,7 +229,7 @@ export class DealCloudClient {
   ): Promise<unknown> {
     return this.request<unknown>(
       "GET",
-      `/data/entrydata/rows/${entryTypeId}/view/${viewId}`,
+      `/data/entrydata/rows/view/${entryTypeId}/${viewId}`,
       undefined,
       { skip: String(skip), limit: String(limit) }
     );
@@ -243,7 +238,37 @@ export class DealCloudClient {
   async listViews(entryTypeId: number): Promise<unknown[]> {
     return this.request<unknown[]>(
       "GET",
-      `/data/entrydata/rows/${entryTypeId}/views`
+      `/data/entrydata/rows/view/${entryTypeId}`
+    );
+  }
+
+  // -----------------------------------------------------------------------
+  // Data endpoints — Cells filter
+  // -----------------------------------------------------------------------
+
+  async filterEntries(
+    entryTypeId: number,
+    filters: Array<{ fieldId: number; value: unknown; operation?: string }>
+  ): Promise<unknown> {
+    return this.request<unknown>(
+      "POST",
+      `/data/entrydata/${entryTypeId}/filter`,
+      filters
+    );
+  }
+
+  // -----------------------------------------------------------------------
+  // Delete
+  // -----------------------------------------------------------------------
+
+  async deleteEntries(
+    entryTypeId: number,
+    entryIds: number[]
+  ): Promise<unknown> {
+    return this.request<unknown>(
+      "DELETE",
+      `/data/entrydata/${entryTypeId}`,
+      entryIds
     );
   }
 
@@ -291,7 +316,6 @@ export class DealCloudClient {
   // -----------------------------------------------------------------------
 
   async getAllHistory(
-    entryTypeId: number,
     modifiedSince?: string,
     skip = 0,
     limit = 100
@@ -303,7 +327,7 @@ export class DealCloudClient {
     if (modifiedSince) query.modifiedSince = modifiedSince;
     return this.request<unknown>(
       "GET",
-      `/data/entrydata/${entryTypeId}/allHistory`,
+      "/data/entrydata/allhistory",
       undefined,
       query
     );

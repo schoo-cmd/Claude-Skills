@@ -145,38 +145,24 @@ server.tool(
 
 server.tool(
   "search_entries",
-  "Search / query entries of a given type with optional filters, field selection, sorting, and pagination. " +
-    "Use get_fields first to discover available field IDs.",
+  "Search / query entries of a given type using MongoDB-style filters. " +
+    "Use get_fields first to discover field apiNames. " +
+    "Query examples: \"{Status: {$eq: 'Active'}}\", \"{DealSize: {$gt: 1000000}}\", " +
+    "\"{Name: {$contains: 'Acme'}}\". " +
+    "Operators: $eq, $contains, $gt, $lt, $gte, $lte, $in, $nin, $between, $or, $and.",
   {
     entryTypeId: z.number().int().describe("The entry type ID to query"),
-    fieldIds: z
-      .array(z.number().int())
-      .optional()
-      .describe("Field IDs to include in results. Omit for all fields."),
     query: z
-      .array(
-        z.object({
-          fieldId: z.number().int(),
-          value: z.unknown(),
-          operator: z
-            .string()
-            .optional()
-            .describe(
-              "Filter operator: $eq, $contains, $gt, $lt, $gte, $lte, $in, $between, $or, $and"
-            ),
-        })
-      )
+      .string()
       .optional()
-      .describe("Filter conditions"),
-    orderBy: z
-      .array(
-        z.object({
-          fieldId: z.number().int(),
-          direction: z.enum(["asc", "desc"]),
-        })
-      )
+      .describe(
+        "MongoDB-style query string, e.g. \"{Status: {$eq: 'Active'}}\"." +
+          " Omit to return all entries."
+      ),
+    fields: z
+      .array(z.string())
       .optional()
-      .describe("Sort order"),
+      .describe("Field apiNames to include in results. Omit for all fields."),
     skip: z.number().int().min(0).default(0).describe("Records to skip"),
     limit: z
       .number()
@@ -186,14 +172,15 @@ server.tool(
       .default(100)
       .describe("Max records (default 100, max 1000)"),
   },
-  async ({ entryTypeId, fieldIds, query, orderBy, skip, limit }) => {
+  async ({ entryTypeId, query, fields, skip, limit }) => {
     try {
       const result = await client.queryEntries(entryTypeId, {
-        fieldIds,
         query,
-        orderBy,
+        fields,
         skip,
         limit,
+        resolveReferenceUrls: true,
+        wrapIntoArrays: true,
       });
       return safeResult(result);
     } catch (err) {
@@ -273,6 +260,37 @@ server.tool(
   }
 );
 
+server.tool(
+  "filter_entries",
+  "Filter entries of a given type using the Cells filter API. Provide an array of " +
+    "{fieldId, value, operation} conditions (ANDed together). " +
+    "Use get_fields first to discover field IDs.",
+  {
+    entryTypeId: z.number().int().describe("The entry type ID"),
+    filters: z
+      .array(
+        z.object({
+          fieldId: z.number().int().describe("Field ID to filter on"),
+          value: z.unknown().describe("Value to compare"),
+          operation: z
+            .string()
+            .optional()
+            .describe("Filter operation (e.g. Equals, Contains, GreaterThan)"),
+        })
+      )
+      .min(1)
+      .describe("Filter conditions (all ANDed together)"),
+  },
+  async ({ entryTypeId, filters }) => {
+    try {
+      const result = await client.filterEntries(entryTypeId, filters);
+      return safeResult(result);
+    } catch (err) {
+      return errorResult(err);
+    }
+  }
+);
+
 // ---------------------------------------------------------------------------
 // Data tools — writing
 // ---------------------------------------------------------------------------
@@ -280,7 +298,8 @@ server.tool(
 server.tool(
   "create_entry",
   "Create a new entry (record) of a given type. Provide field values as an array of {fieldId, value} pairs. " +
-    "Use get_fields to discover valid field IDs first.",
+    "Use get_fields to discover valid field IDs first. " +
+    "New entries use a negative entryId placeholder internally — the API returns the real ID.",
   {
     entryTypeId: z.number().int().describe("The entry type ID"),
     fields: z
@@ -299,20 +318,14 @@ server.tool(
   },
   async ({ entryTypeId, fields, ignoreNearDups }) => {
     try {
-      // New entries use a negative entryId placeholder
-      const storeRequests = fields.map((f, idx) => ({
-        entryId: -(idx + 1),
+      // All fields for a single new entry share the same negative placeholder ID
+      const storeRequests = fields.map((f) => ({
+        entryId: -1,
         fieldId: f.fieldId,
         value: f.value,
         ignoreNearDups,
       }));
-      // All fields for the same new entry must share the same negative ID
-      const entryPlaceholder = -1;
-      const aligned = storeRequests.map((r) => ({
-        ...r,
-        entryId: entryPlaceholder,
-      }));
-      const result = await client.setCellValues(entryTypeId, aligned);
+      const result = await client.setCellValues(entryTypeId, storeRequests);
       return safeResult(result);
     } catch (err) {
       return errorResult(err);
@@ -351,6 +364,29 @@ server.tool(
   }
 );
 
+server.tool(
+  "delete_entries",
+  "Delete one or more entries by ID. This is IRREVERSIBLE — use with caution.",
+  {
+    entryTypeId: z.number().int().describe("The entry type ID"),
+    entryIds: z
+      .array(z.number().int())
+      .min(1)
+      .max(100)
+      .describe("Entry IDs to delete (max 100 per call)"),
+  },
+  async ({ entryTypeId, entryIds }) => {
+    try {
+      const result = await client.deleteEntries(entryTypeId, entryIds);
+      return safeResult(
+        result ?? { success: true, deleted: entryIds.length }
+      );
+    } catch (err) {
+      return errorResult(err);
+    }
+  }
+);
+
 // ---------------------------------------------------------------------------
 // Management tools
 // ---------------------------------------------------------------------------
@@ -375,9 +411,8 @@ server.tool(
 
 server.tool(
   "get_history",
-  "Get modification history for an entry type. Useful for auditing recent changes.",
+  "Get modification history across all entry types. Useful for auditing recent changes.",
   {
-    entryTypeId: z.number().int().describe("The entry type ID"),
     modifiedSince: z
       .string()
       .optional()
@@ -393,10 +428,9 @@ server.tool(
       .default(100)
       .describe("Max records (default 100, max 1000)"),
   },
-  async ({ entryTypeId, modifiedSince, skip, limit }) => {
+  async ({ modifiedSince, skip, limit }) => {
     try {
       const history = await client.getAllHistory(
-        entryTypeId,
         modifiedSince,
         skip,
         limit
