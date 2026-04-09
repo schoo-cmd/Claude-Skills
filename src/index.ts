@@ -216,13 +216,16 @@ server.tool(
 
 server.tool(
   "list_views",
-  "List saved views for an entry type. Views can be used with get_view_data.",
+  "List saved views in DealCloud. Optionally filter by name. Views can be used with get_view_data.",
   {
-    entryTypeId: z.number().int().describe("The entry type ID"),
+    query: z
+      .string()
+      .optional()
+      .describe("Optional search string to filter views by name"),
   },
-  async ({ entryTypeId }) => {
+  async ({ query }) => {
     try {
-      const views = await client.listViews(entryTypeId);
+      const views = await client.listViews(query);
       return safeResult(views);
     } catch (err) {
       return errorResult(err);
@@ -232,9 +235,8 @@ server.tool(
 
 server.tool(
   "get_view_data",
-  "Fetch data from a saved DealCloud view (paginated).",
+  "Fetch data from a saved DealCloud view (paginated). Get the view ID from list_views first.",
   {
-    entryTypeId: z.number().int().describe("The entry type ID"),
     viewId: z.number().int().describe("The view ID (from list_views)"),
     skip: z.number().int().min(0).default(0).describe("Records to skip"),
     limit: z
@@ -245,14 +247,9 @@ server.tool(
       .default(100)
       .describe("Max records (default 100, max 1000)"),
   },
-  async ({ entryTypeId, viewId, skip, limit }) => {
+  async ({ viewId, skip, limit }) => {
     try {
-      const data = await client.getEntriesByView(
-        entryTypeId,
-        viewId,
-        skip,
-        limit
-      );
+      const data = await client.getEntriesByView(viewId, skip, limit);
       return safeResult(data);
     } catch (err) {
       return errorResult(err);
@@ -411,13 +408,16 @@ server.tool(
 
 server.tool(
   "get_history",
-  "Get modification history across all entry types. Useful for auditing recent changes.",
+  "Get modification history for an entry type (includes calculated/system-triggered changes). " +
+    "Results limited to 6 months. Specify modifiedSince to also see deleted entries.",
   {
+    entryTypeId: z.number().int().describe("The entry type ID"),
     modifiedSince: z
       .string()
       .optional()
       .describe(
-        "ISO 8601 datetime string to filter changes after (e.g. 2025-01-01T00:00:00Z)"
+        "ISO 8601 datetime to filter changes after (e.g. 2025-01-01T00:00:00Z). " +
+          "Required to see deleted entries."
       ),
     skip: z.number().int().min(0).default(0).describe("Records to skip"),
     limit: z
@@ -428,9 +428,10 @@ server.tool(
       .default(100)
       .describe("Max records (default 100, max 1000)"),
   },
-  async ({ modifiedSince, skip, limit }) => {
+  async ({ entryTypeId, modifiedSince, skip, limit }) => {
     try {
       const history = await client.getAllHistory(
+        entryTypeId,
         modifiedSince,
         skip,
         limit

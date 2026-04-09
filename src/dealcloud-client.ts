@@ -222,23 +222,26 @@ export class DealCloudClient {
   }
 
   async getEntriesByView(
-    entryTypeId: number,
     viewId: number,
     skip = 0,
     limit = 100
   ): Promise<unknown> {
     return this.request<unknown>(
-      "GET",
-      `/data/entrydata/rows/view/${entryTypeId}/${viewId}`,
+      "POST",
+      `/data/rows/view/${viewId}`,
       undefined,
       { skip: String(skip), limit: String(limit) }
     );
   }
 
-  async listViews(entryTypeId: number): Promise<unknown[]> {
+  async listViews(query?: string): Promise<unknown[]> {
+    const params: Record<string, string> = {};
+    if (query) params.query = query;
     return this.request<unknown[]>(
       "GET",
-      `/data/entrydata/rows/view/${entryTypeId}`
+      "/data/rows/view",
+      undefined,
+      params
     );
   }
 
@@ -316,6 +319,7 @@ export class DealCloudClient {
   // -----------------------------------------------------------------------
 
   async getAllHistory(
+    entryTypeId: number,
     modifiedSince?: string,
     skip = 0,
     limit = 100
@@ -327,7 +331,7 @@ export class DealCloudClient {
     if (modifiedSince) query.modifiedSince = modifiedSince;
     return this.request<unknown>(
       "GET",
-      "/data/entrydata/allhistory",
+      `/data/entrydata/${entryTypeId}/entries/allHistory`,
       undefined,
       query
     );
