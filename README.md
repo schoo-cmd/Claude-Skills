@@ -31,14 +31,18 @@ You need:
 
 ### 3. Add to Claude Code
 
-Add this to your Claude Code MCP settings (`~/.claude/claude_desktop_config.json` or via the settings UI):
+The server supports two modes: **local** (stdio) for desktop/CLI and **remote** (HTTP) for mobile/web.
+
+#### Option A: Local mode (desktop / CLI)
+
+Add this to your Claude Code MCP settings (`~/.claude.json`):
 
 ```json
 {
   "mcpServers": {
     "dealcloud": {
       "command": "node",
-      "args": ["/absolute/path/to/dealcloud-mcp-server/dist/index.js"],
+      "args": ["/absolute/path/to/Claude-Skills/dist/index.js"],
       "env": {
         "DEALCLOUD_SITE_URL": "https://yourfirm.dealcloud.com",
         "DEALCLOUD_CLIENT_ID": "your-client-id",
@@ -48,6 +52,30 @@ Add this to your Claude Code MCP settings (`~/.claude/claude_desktop_config.json
   }
 }
 ```
+
+#### Option B: Remote mode (mobile / web)
+
+Run the server as an HTTP service so Claude Code mobile can connect:
+
+```bash
+# Set credentials and start in HTTP mode
+export DEALCLOUD_SITE_URL="https://yourfirm.dealcloud.com"
+export DEALCLOUD_CLIENT_ID="your-client-id"
+export DEALCLOUD_CLIENT_SECRET="your-client-secret"
+
+npm run start:http
+# → DealCloud MCP server (HTTP) listening on http://0.0.0.0:3000/mcp
+```
+
+You can change the port with `MCP_PORT=8080 npm run start:http`.
+
+Then in Claude Code mobile/web, add a **remote MCP server** with the URL:
+
+```
+http://your-server-ip:3000/mcp
+```
+
+> **Important for remote mode**: Run behind a reverse proxy with HTTPS (e.g. nginx, Caddy) and restrict access with a firewall or VPN. Do not expose the HTTP endpoint directly to the public internet without authentication.
 
 ## Available Tools
 

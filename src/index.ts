@@ -9,8 +9,12 @@
  * Credentials are loaded from environment variables — never hard‑coded.
  */
 
+import { randomUUID } from "node:crypto";
+import { createServer, IncomingMessage, ServerResponse } from "node:http";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
+import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
+import { isInitializeRequest } from "@modelcontextprotocol/sdk/types.js";
 import { z } from "zod";
 import { DealCloudClient } from "./dealcloud-client.js";
 
@@ -444,15 +448,105 @@ server.tool(
 );
 
 // ---------------------------------------------------------------------------
-// Start
+// Start — stdio (local) or HTTP (remote/mobile)
 // ---------------------------------------------------------------------------
 
-async function main() {
+const httpMode = process.argv.includes("--http");
+const port = parseInt(process.env.MCP_PORT ?? "3000", 10);
+
+async function startStdio() {
   const transport = new StdioServerTransport();
   await server.connect(transport);
 }
 
-main().catch((err) => {
+async function startHttp() {
+  // Track active sessions so we can route and clean up
+  const transports: Record<string, StreamableHTTPServerTransport> = {};
+
+  const httpServer = createServer(async (req: IncomingMessage, res: ServerResponse) => {
+    // Only serve the /mcp endpoint
+    const url = new URL(req.url ?? "/", `http://localhost:${port}`);
+    if (url.pathname !== "/mcp") {
+      res.writeHead(404).end("Not found");
+      return;
+    }
+
+    try {
+      if (req.method === "POST") {
+        // Read body
+        const chunks: Buffer[] = [];
+        for await (const chunk of req) chunks.push(chunk as Buffer);
+        const body = JSON.parse(Buffer.concat(chunks).toString());
+
+        const sessionId = req.headers["mcp-session-id"] as string | undefined;
+
+        // New session (Initialize request)
+        if (!sessionId || !transports[sessionId]) {
+          if (isInitializeRequest(body)) {
+            const transport = new StreamableHTTPServerTransport({
+              sessionIdGenerator: () => randomUUID(),
+              onsessioninitialized: (id) => {
+                transports[id] = transport;
+              },
+            });
+
+            transport.onclose = () => {
+              const sid = transport.sessionId;
+              if (sid && transports[sid]) delete transports[sid];
+            };
+
+            await server.connect(transport);
+            await transport.handleRequest(req, res, body);
+            return;
+          }
+          res.writeHead(400).end("Bad request: missing session ID");
+          return;
+        }
+
+        // Existing session
+        await transports[sessionId].handleRequest(req, res, body);
+      } else if (req.method === "GET") {
+        // SSE stream for notifications
+        const sessionId = req.headers["mcp-session-id"] as string | undefined;
+        if (!sessionId || !transports[sessionId]) {
+          res.writeHead(400).end("Invalid or missing session ID");
+          return;
+        }
+        await transports[sessionId].handleRequest(req, res);
+      } else if (req.method === "DELETE") {
+        // Session termination
+        const sessionId = req.headers["mcp-session-id"] as string | undefined;
+        if (!sessionId || !transports[sessionId]) {
+          res.writeHead(400).end("Invalid or missing session ID");
+          return;
+        }
+        await transports[sessionId].handleRequest(req, res);
+      } else {
+        res.writeHead(405).end("Method not allowed");
+      }
+    } catch (err) {
+      if (!res.headersSent) {
+        res.writeHead(500).end("Internal server error");
+      }
+    }
+  });
+
+  httpServer.listen(port, "0.0.0.0", () => {
+    // eslint-disable-next-line no-console
+    console.log(`DealCloud MCP server (HTTP) listening on http://0.0.0.0:${port}/mcp`);
+  });
+
+  process.on("SIGINT", async () => {
+    for (const sid of Object.keys(transports)) {
+      await transports[sid].close();
+      delete transports[sid];
+    }
+    httpServer.close();
+    process.exit(0);
+  });
+}
+
+(httpMode ? startHttp() : startStdio()).catch((err) => {
   // eslint-disable-next-line no-console
   console.error("Fatal:", err);
   process.exit(1);
