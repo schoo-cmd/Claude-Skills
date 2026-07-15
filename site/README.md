@@ -1,4 +1,4 @@
-# Heritage Park Capital — Website
+# [Firm Name] — Website
 
 A static, five-page marketing site.
 
